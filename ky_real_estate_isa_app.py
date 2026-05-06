@@ -3,76 +3,50 @@ import pandas as pd
 from datetime import datetime, timedelta
 from openai import OpenAI
 import os
-from dotenv import load_dotenv, set_key
+from dotenv import load_dotenv
 
-# Load .env file if it exists
+# Load environment variables
 load_dotenv()
 
-st.set_page_config(page_title="Shaun's KY Real Estate ISA", layout="wide", page_icon="🏠")
-st.title("🗝️ Central Kentucky Lead & Referral Manager")
-st.markdown("**AI ISA powered by OpenAI** — Qualifies leads and books appointments")
+st.set_page_config(page_title="Shaun's KY ISA", layout="wide", page_icon="🏠")
 
-st.caption("Lexington Market: Median ≈ $329K – $357K • Balanced Inventory")
+st.title("🗝️ Central Kentucky Real Estate ISA")
+st.caption("AI Inside Sales Agent • Lexington • Richmond • Lancaster • Versailles")
 
-# ====================== API KEY MANAGEMENT ======================
-def get_api_key():
-    # First priority: .env file
-    env_key = os.getenv("OPENAI_API_KEY")
-    if env_key:
-        return env_key
-    
-    # Second priority: Session state
-    if "openai_api_key" in st.session_state:
-        return st.session_state.openai_api_key
-    return None
+# ====================== OPENAI SETUP ======================
+if "openai_key" not in st.session_state:
+    st.session_state.openai_key = os.getenv("OPENAI_API_KEY", "")
 
-# Sidebar - API Key Setup
 with st.sidebar:
-    st.header("🔑 OpenAI API Key")
+    st.header("🔑 OpenAI Settings")
+    api_key = st.text_input(
+        "OpenAI API Key", 
+        value=st.session_state.openai_key, 
+        type="password"
+    )
     
-    current_key = get_api_key()
-    if current_key:
-        st.success("✅ API Key loaded from .env file")
-    else:
-        st.warning("No API Key saved yet")
+    if st.button("Save Key"):
+        st.session_state.openai_key = api_key
+        st.success("Key saved for this session!")
     
-    manual_key = st.text_input("Enter OpenAI API Key", type="password", value="")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Save Key to .env"):
-            if manual_key.startswith("sk-"):
-                set_key(".env", "OPENAI_API_KEY", manual_key)
-                st.success("✅ Key saved to .env file!")
-                st.rerun()
-            else:
-                st.error("Invalid key format")
-    
-    with col2:
-        if st.button("Clear Saved Key"):
-            if os.path.exists(".env"):
-                os.remove(".env")
-                st.success("Key file removed")
-                st.rerun()
-
     model_choice = st.selectbox("Model", ["gpt-4o-mini", "gpt-4o"], index=0)
     st.markdown("---")
 
-# ====================== REST OF THE APP ======================
-api_key = get_api_key()
-
-# Data Initialization
+# ====================== DATA ======================
 if 'leads' not in st.session_state:
-    st.session_state.leads = pd.DataFrame(columns=['Date', 'Name', 'Phone', 'Type', 'Location', 'Budget', 'Status', 'Referral_Source', 'Appointment'])
+    st.session_state.leads = pd.DataFrame(columns=[
+        'Date', 'Name', 'Phone', 'Type', 'Location', 'Budget', 'Status', 'Appointment'
+    ])
 
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 
+# ====================== HELPER FUNCTIONS ======================
 def get_available_slots():
     slots = []
     current = datetime.now() + timedelta(days=1)
-    while len(slots) < 10:
-        if current.weekday() < 5:
+    while len(slots) < 8:
+        if current.weekday() < 5:   # Mon-Fri
             for hour in [10, 13, 15]:
                 slot = current.replace(hour=hour, minute=0)
                 if slot > datetime.now():
@@ -80,76 +54,90 @@ def get_available_slots():
         current += timedelta(days=1)
     return slots
 
-# Navigation
-page = st.sidebar.selectbox("Navigation", ["Lead Capture", "🤖 AI ISA Chat", "Dashboard"])
+# ====================== NAVIGATION ======================
+page = st.sidebar.selectbox("Go to", ["Lead Capture", "🤖 AI ISA Chat", "Dashboard"])
 
-# ==================== LEAD CAPTURE ====================
+# ====================== LEAD CAPTURE ======================
 if page == "Lead Capture":
     st.header("New Lead Capture")
     with st.form("lead_form"):
         col1, col2 = st.columns(2)
         with col1:
             name = st.text_input("Full Name *")
-            phone = st.text_input("Phone *")
-            lead_type = st.selectbox("Type", ["Buyer", "Seller"])
+            phone = st.text_input("Phone Number *")
+            lead_type = st.selectbox("Lead Type", ["Buyer", "Seller"])
         with col2:
             location = st.selectbox("Area", ["Lexington", "Richmond", "Lancaster", "Versailles"])
             budget = st.number_input("Budget ($)", min_value=0, step=5000)
         
         submitted = st.form_submit_button("Save Lead")
         if submitted and name and phone:
-            new_lead = pd.DataFrame([{
+            new_row = pd.DataFrame([{
                 'Date': datetime.now().strftime("%Y-%m-%d %H:%M"),
-                'Name': name, 'Phone': phone, 'Type': lead_type,
-                'Location': location, 'Budget': f"${budget:,}",
-                'Status': 'New', 'Referral_Source': '', 'Appointment': ''
+                'Name': name,
+                'Phone': phone,
+                'Type': lead_type,
+                'Location': location,
+                'Budget': f"${budget:,}" if budget > 0 else "",
+                'Status': 'New',
+                'Appointment': ''
             }])
-            st.session_state.leads = pd.concat([st.session_state.leads, new_lead], ignore_index=True)
-            st.success(f"✅ Lead for {name} saved!")
+            st.session_state.leads = pd.concat([st.session_state.leads, new_row], ignore_index=True)
+            st.success(f"✅ Lead for {name} saved successfully!")
 
-# ==================== AI ISA CHAT ====================
+# ====================== AI ISA CHAT ======================
 elif page == "🤖 AI ISA Chat":
-    st.header("🤖 AI ISA Chat")
+    st.header("🤖 AI ISA - Appointment Setter")
     
     if not st.session_state.messages:
-        st.session_state.messages.append({"role": "assistant", "content": "Hi! I'm Shaun's AI ISA. Are you looking to buy or sell in Central Kentucky?"})
+        st.session_state.messages.append({
+            "role": "assistant", 
+            "content": "Hi! I'm Shaun's AI ISA. Thanks for your interest in Central Kentucky real estate. Are you looking to buy or sell?"
+        })
 
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
-    if prompt := st.chat_input("Lead's reply..."):
+    if prompt := st.chat_input("Type the lead's response..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.write(prompt)
 
-        if api_key:
+        if not api_key or not api_key.startswith("sk-"):
+            reply = "⚠️ Please enter a valid OpenAI API key in the sidebar."
+        else:
             with st.spinner("AI ISA thinking..."):
                 try:
                     client = OpenAI(api_key=api_key)
                     response = client.chat.completions.create(
                         model=model_choice,
-                        messages=[{"role": m["role"], "content": m["content"]} for m in st.session_state.messages],
-                        temperature=0.7,
-                        max_tokens=400
+                        messages=st.session_state.messages,
+                        temperature=0.75,
+                        max_tokens=350
                     )
                     reply = response.choices[0].message.content
                 except Exception as e:
-                    reply = f"❌ Error: {str(e)}"
-        else:
-            reply = "⚠️ Please enter and save your OpenAI API key in the sidebar first."
+                    reply = f"Error: {str(e)}"
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
         with st.chat_message("assistant"):
             st.write(reply)
 
-# ==================== DASHBOARD ====================
+# ====================== DASHBOARD ======================
 elif page == "Dashboard":
     st.header("Leads Dashboard")
     if not st.session_state.leads.empty:
-        st.dataframe(st.session_state.leads, use_container_width=True)
-        st.download_button("Download Leads", st.session_state.leads.to_csv(index=False), "leads.csv")
+        st.dataframe(st.session_state.leads.sort_values('Date', ascending=False), use_container_width=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Total Leads", len(st.session_state.leads))
+        with col2:
+            st.download_button("Download CSV", 
+                             st.session_state.leads.to_csv(index=False), 
+                             "central_ky_leads.csv")
     else:
-        st.info("No leads yet. Go to Lead Capture to add some.")
+        st.info("No leads yet. Start by adding leads.")
 
-st.caption("App for Shaun • Central Kentucky Real Estate • API Key saved securely in .env")
+st.caption("Built for Shaun • Central Kentucky Real Estate")
